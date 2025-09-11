@@ -1,0 +1,8 @@
+.DS_Store
+entitlements.plist
+Makefile
+fynecross.txt
+fyne-cross/
+bin/
+ffmpeg.sh
+assets/ffmpeg/
