@@ -36,6 +36,7 @@ import (
 	"github.com/ncruces/zenity"
 	xdraw "golang.org/x/image/draw"
 
+	"github.com/anthonybliss1/giffy/gui/utils"
 	ui "github.com/anthonybliss1/giffy/theme"
 )
 
@@ -233,7 +234,7 @@ func configWindow(a fyne.App) fyne.Window {
 		if gridRows.Text == "" || r <= 0 || !isNumeric(gridRows.Text) || gridColumns.Text == "" || c <= 0 || !isNumeric(gridColumns.Text) {
 			dialog.ShowInformation("Incomplete Entry", "Please enter valid numbers for the rows and columns", w)
 		} else if r > 5 || c > 5 {
-			dialog.ShowInformation("Invalid Entry", "Please enter a number less than 6", w)
+			dialog.ShowInformation("Invalid Entry", "Maximum of 5 rows and 5 columns is allowed", w)
 		} else {
 			gridRowsInt, _ := strconv.Atoi(gridRows.Text)
 			gridColumnsInt, _ := strconv.Atoi(gridColumns.Text)
@@ -281,10 +282,10 @@ func gridWindow(a fyne.App, gridRows, gridColumns int) fyne.Window {
 	parseFPS := func(_ string) int {
 		v, err := strconv.Atoi(fpsInput.Text)
 		if err != nil || v <= 0 {
-			return 15
+			return 5
 		}
-		if v > 120 {
-			return 120
+		if v > 15 {
+			return 15
 		}
 		return v
 	}
@@ -325,7 +326,7 @@ func gridWindow(a fyne.App, gridRows, gridColumns int) fyne.Window {
 			fps := parseFPS(fpsInput.Text)
 
 			// run export off the UI thread with a simple progress dialog
-			progress := dialog.NewCustomWithoutButtons("Exporting", &widget.ProgressBarInfinite{}, w)
+			progress := dialog.NewCustomWithoutButtons("Exporting...", &widget.ProgressBarInfinite{}, w)
 			progress.Show()
 			go func() {
 				err := buildExport(u, gridRows, gridColumns, cells, fps, slider)
@@ -346,7 +347,7 @@ func gridWindow(a fyne.App, gridRows, gridColumns int) fyne.Window {
 
 	// FPS input for header hbox
 	fpsInput = widget.NewEntry()
-	fpsInput.SetText("15") // Default 15 FPS
+	fpsInput.SetText("5") // Default 5 FPS
 	fpsLabel := canvas.NewText("FPS", ui.Giffy)
 	fpsLabel.TextSize = 16
 	fpsSpacer := newSpacer(40, 10)
@@ -367,7 +368,7 @@ func gridWindow(a fyne.App, gridRows, gridColumns int) fyne.Window {
 
 	// Add proper amount of cells to gridArea
 	for i := 0; i < (gridColumns * gridRows); i++ {
-		cell := newFileCell(w)
+		cell := newFileCell(a, w)
 		cell.OnLoaded = func(count int) {
 			slider.Max = float64(count)
 		}
@@ -480,7 +481,7 @@ func gridWindow(a fyne.App, gridRows, gridColumns int) fyne.Window {
 }
 
 // Helper function to create each cell in the grid layout
-func newFileCell(parent fyne.Window) *FileCell {
+func newFileCell(a fyne.App, parent fyne.Window) *FileCell {
 	// Initialize collection struct
 	fc := &FileCell{}
 
@@ -505,22 +506,34 @@ func newFileCell(parent fyne.Window) *FileCell {
 			dialog.ShowError(err, parent)
 			return
 		}
+
 		children, err := listable.List()
 		if err != nil {
 			dialog.ShowError(err, parent)
 			return
 		}
+
 		// Loop through files in folder to store in FileCell
-		var images []fyne.URI
-		for _, c := range children {
-			// Only add image files (avoid .DS_Store like the plague)
-			switch strings.ToLower(filepath.Ext(c.Name())) {
-			case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp":
-				//fmt.Printf("[DEBUG] Added File: %s\n", c)
-				images = append(images, c)
-			}
+		images, warning, err := walkChildren(children)
+		if err != nil {
+			dialog.ShowError(err, parent)
+			return
 		}
 
+		if warning {
+			resize := warningWindow(a, dir)
+			resize.CenterOnScreen()
+			resize.Show()
+			return
+		}
+
+		if len(images) == 0 {
+			imgError := errors.New("No images found. Please check the file format of the uploaded images. Accepted file types are '.png,', '.jpg', '.jpeg'")
+			dialog.ShowError(imgError, parent)
+			return
+		}
+
+		// Sort files in slice of file paths
 		sort.SliceStable(images, func(i, j int) bool {
 			ni, okI := frameIndex(images[i])
 			nj, okJ := frameIndex(images[j])
@@ -568,12 +581,199 @@ func newFileCell(parent fyne.Window) *FileCell {
 	return fc
 }
 
+// UI function to build file size warning window
+func warningWindow(a fyne.App, inputDir string) fyne.Window {
+	w := a.NewWindow("File Size Warning")
+	w.Resize(fyne.NewSize(500, 200))
+	w.SetFixedSize(true)
+
+	// Header
+	msg := canvas.NewText("One or more of your images is larger than 2 MB", ui.Giffy)
+	msg.TextSize = 16
+	msg.Alignment = fyne.TextAlignCenter
+
+	headerSpacer := newSpacer(10, 15)
+
+	q := canvas.NewText("Resize all images with Giffy?", ui.Giffy)
+	q.TextSize = 16
+	q.TextStyle.Bold = true
+	q.Alignment = fyne.TextAlignCenter
+
+	headerV := container.NewVBox(headerSpacer, msg)
+	header := container.NewHBox(layout.NewSpacer(), headerV, layout.NewSpacer())
+
+	// Button area
+	cancel := widget.NewButton("Cancel", func() {
+		w.Close()
+	})
+
+	ok := widget.NewButton("  OK  ", func() {
+		resizePNG(w, inputDir)
+	})
+
+	spacer := newSpacer(20, 20)
+
+	btnAreaH := container.NewHBox(layout.NewSpacer(), cancel, spacer, ok, layout.NewSpacer())
+	btnArea := container.NewVBox(layout.NewSpacer(), q, spacer, btnAreaH)
+
+	footerSpacer := newSpacer(10, 25)
+
+	w.SetContent(container.NewBorder(
+		header,
+		footerSpacer,
+		nil,
+		nil,
+		btnArea,
+	))
+
+	return w
+}
+
+// UI function to allow user to specify file resize folder
+func resizePNG(parent fyne.Window, inputDir string) {
+	var content *fyne.Container
+	var opts utils.ResizeOptions
+	var uploaded bool = false
+	var setContent func() fyne.CanvasObject
+	var outputDir string
+	var err error
+
+	opts.InputDir = inputDir
+
+	// Before Uploading
+	title := canvas.NewText("Please specify path for resized images", ui.Giffy)
+	title.TextSize = 14
+	title.Alignment = fyne.TextAlignCenter
+
+	spacer := newSpacer(10, 20)
+
+	btn := widget.NewButton("Select Folder", func() {
+		opts.OutputDir, err = zenity.SelectFile(zenity.Directory(), zenity.Title("Choose a folder"))
+		if errors.Is(err, zenity.ErrCanceled) {
+			return
+		}
+		if err != nil {
+			dialog.ShowError(err, parent)
+			return
+		}
+
+		uploaded = true
+		parent.SetContent(setContent())
+
+		fmt.Printf("Resize dir: %s\n", outputDir)
+	})
+
+	// After Uploading
+	title2 := canvas.NewText("Please specify maximum width and height", ui.Giffy)
+	title2.TextSize = 14
+	title2.Alignment = fyne.TextAlignCenter
+
+	entryWidth := newSpacer(150, 0)
+
+	widthInput := widget.NewEntry()
+	widthInput.SetPlaceHolder("Enter width...")
+	heightInput := widget.NewEntry()
+	heightInput.SetPlaceHolder("Enter height...")
+
+	isNumeric := func(s string) bool {
+		_, err := strconv.ParseFloat(s, 64)
+		return err == nil
+	}
+
+	submitBtn := widget.NewButton("Resize", func() {
+		if widthInput.Text != "" && heightInput.Text != "" {
+			opts.MaxW, err = strconv.Atoi(widthInput.Text)
+			if err != nil {
+				dialog.ShowError(err, parent)
+				return
+			}
+
+			opts.MaxH, err = strconv.Atoi(heightInput.Text)
+			if err != nil {
+				dialog.ShowError(err, parent)
+				return
+			}
+		}
+
+		if opts.MaxW < 0 || !isNumeric(widthInput.Text) || widthInput.Text == "" || opts.MaxH < 0 || !isNumeric(heightInput.Text) || heightInput.Text == "" {
+			dialog.ShowInformation("Invalid Entry", "Please enter valid maximum width and height", parent)
+		} else {
+			fmt.Println("[DEBUG] Starting resizing...")
+			progress := dialog.NewCustomWithoutButtons("Resizing...", &widget.ProgressBarInfinite{}, parent)
+			progress.Show()
+			go func() {
+				processed, resized, errors := utils.ProcessDir(opts)
+				fyne.Do(func() {
+					progress.Hide()
+					info := dialog.NewInformation("Resize Complete", fmt.Sprintf("Resize Completed\nProcessed: %d, Resized: %d, Errors: %d", processed, resized, errors), parent)
+					info.SetOnClosed(func() { parent.Close() })
+					info.Show()
+				})
+			}()
+		}
+	})
+
+	setContent = func() fyne.CanvasObject {
+		if !uploaded {
+			contentV := container.NewVBox(layout.NewSpacer(), title, spacer, container.NewHBox(layout.NewSpacer(), btn, layout.NewSpacer()), layout.NewSpacer())
+			content = container.NewHBox(layout.NewSpacer(), contentV, layout.NewSpacer())
+			fmt.Printf("[DEBUG] Content Set, Uploaded = %t\n", uploaded)
+		} else {
+			// Fyne craziness
+			widthBox := container.NewVBox(entryWidth, widthInput)
+			heightBox := container.NewVBox(entryWidth, heightInput)
+			contentV := container.NewVBox(layout.NewSpacer(), title2, spacer, container.NewHBox(layout.NewSpacer(), widthBox, spacer, heightBox, layout.NewSpacer()), spacer, container.NewHBox(layout.NewSpacer(), submitBtn, layout.NewSpacer()), layout.NewSpacer())
+			content = container.NewHBox(layout.NewSpacer(), contentV, layout.NewSpacer())
+		}
+		return content
+	}
+
+	parent.SetContent(setContent())
+
+}
+
 // Helper function to make specifically sized spacer objects
 func newSpacer(width, height float32) fyne.CanvasObject {
 	spacer := canvas.NewRectangle(color.Transparent)
 	spacer.SetMinSize(fyne.NewSize(width, height))
 
 	return spacer
+}
+
+// Helper function to walk the folder provided by user and 1) Only track images and 2) Raise a warning if the image is > 2 MB
+func walkChildren(children []fyne.URI) ([]fyne.URI, bool, error) {
+	fileSizeWarning := false
+	var images []fyne.URI
+
+	for _, c := range children {
+		// Only add image files (avoid .DS_Store like the plague)
+		e := strings.ToLower(filepath.Ext(c.Name()))
+		switch e {
+		case ".png", ".jpg", ".jpeg":
+			//fmt.Printf("[DEBUG] Added File: %s\n", c)
+
+			// Load image path with os.Stat to retrieve file size in bytes
+			if e == ".png" {
+				imageInfo, err := os.Stat(c.Path())
+				if err != nil {
+					return nil, false, fmt.Errorf("imageInfo failed: %v", err)
+				}
+
+				// Convert bytes to megabytes
+				imageSize := float64(float64(imageInfo.Size()) / (1024.00 * 1024.00))
+
+				// Trigger warning if file size is greater than 2 MB
+				if imageSize > 2.0 {
+					fileSizeWarning = true
+				} else {
+					//	fmt.Printf("[DEBUG] Image Size OK: %v\n", imageSize)
+				}
+			}
+
+			images = append(images, c)
+		}
+	}
+	return images, fileSizeWarning, nil
 }
 
 // Helper function to return trailing numeric values in filename
