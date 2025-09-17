@@ -5,4 +5,4 @@ fynecross.txt
 fyne-cross/
 bin/
 ffmpeg.sh
-assets/ffmpeg/
+gui/windows/assets/ffmpeg/
