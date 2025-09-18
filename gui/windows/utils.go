@@ -71,7 +71,40 @@ func NewFileCell(a fyne.App, parent fyne.Window) *FileCell {
 		}
 
 		if warning {
-			resize := WarningWindow(a, dir)
+			resize := WarningWindow(a, dir, func() {
+				if len(images) == 0 {
+					imgError := errors.New("No images found. Please check the file format of the uploaded images. Accepted file types are '.png,', '.jpg', '.jpeg'")
+					dialog.ShowError(imgError, parent)
+					return
+				}
+
+				// Sort files in slice of file paths
+				sort.SliceStable(images, func(i, j int) bool {
+					ni, okI := FrameIndex(images[i])
+					nj, okJ := FrameIndex(images[j])
+
+					if okI && okJ && ni != nj {
+						return ni < nj
+					}
+					if okI != okJ {
+						// Files with numeric suffix come before those without
+						return okI
+					}
+					// Fallback by basename (case-insensitive)
+					return strings.ToLower(images[i].Name()) < strings.ToLower(images[j].Name())
+				})
+
+				fc.FilesMu.Lock()
+				fc.Files = images
+				fc.FilesMu.Unlock()
+
+				if fc.OnLoaded != nil {
+					fc.OnLoaded(len(images))
+				}
+
+				_ = fc.Show(0)
+				fc.Btn.Hide()
+			})
 			resize.CenterOnScreen()
 			resize.Show()
 			return
@@ -132,7 +165,7 @@ func NewFileCell(a fyne.App, parent fyne.Window) *FileCell {
 }
 
 // UI function to build file size warning window
-func WarningWindow(a fyne.App, inputDir string) fyne.Window {
+func WarningWindow(a fyne.App, inputDir string, onCancel func()) fyne.Window {
 	w := a.NewWindow("File Size Warning")
 	w.Resize(fyne.NewSize(500, 200))
 	w.SetFixedSize(true)
@@ -146,7 +179,6 @@ func WarningWindow(a fyne.App, inputDir string) fyne.Window {
 
 	q := canvas.NewText("Resize all images with Giffy?", ui.Giffy)
 	q.TextSize = 16
-	q.TextStyle.Bold = true
 	q.Alignment = fyne.TextAlignCenter
 
 	headerV := container.NewVBox(headerSpacer, msg)
@@ -155,16 +187,20 @@ func WarningWindow(a fyne.App, inputDir string) fyne.Window {
 	// Button area
 	cancel := widget.NewButton("Cancel", func() {
 		w.Close()
+		if onCancel != nil {
+			onCancel()
+		}
 	})
 
 	ok := widget.NewButton("  OK  ", func() {
 		ResizePNG(w, inputDir)
 	})
 
-	spacer := NewSpacer(20, 20)
+	spacer := NewSpacer(20, 25)
+	sp2 := NewSpacer(0, 5)
 
 	btnAreaH := container.NewHBox(layout.NewSpacer(), cancel, spacer, ok, layout.NewSpacer())
-	btnArea := container.NewVBox(layout.NewSpacer(), q, spacer, btnAreaH)
+	btnArea := container.NewVBox(layout.NewSpacer(), q, spacer, btnAreaH, sp2)
 
 	footerSpacer := NewSpacer(10, 25)
 
@@ -185,14 +221,13 @@ func ResizePNG(parent fyne.Window, inputDir string) {
 	var opts resize.ResizeOptions
 	var uploaded bool = false
 	var setContent func() fyne.CanvasObject
-	var outputDir string
 	var err error
 
 	opts.InputDir = inputDir
 
 	// Before Uploading
 	title := canvas.NewText("Please specify path for resized images", ui.Giffy)
-	title.TextSize = 14
+	title.TextSize = 16
 	title.Alignment = fyne.TextAlignCenter
 
 	spacer := NewSpacer(10, 20)
@@ -210,13 +245,19 @@ func ResizePNG(parent fyne.Window, inputDir string) {
 		uploaded = true
 		parent.SetContent(setContent())
 
-		fmt.Printf("Resize dir: %s\n", outputDir)
+		fmt.Printf("Resize dir: %s\n", opts.OutputDir)
 	})
 
 	// After Uploading
 	title2 := canvas.NewText("Please specify maximum width and height", ui.Giffy)
-	title2.TextSize = 14
+	title2.TextSize = 16
 	title2.Alignment = fyne.TextAlignCenter
+
+	t2 := canvas.NewText("(Recommended MAX is 1200W & 1200H)", ui.Giffy)
+	t2.TextSize = 11
+	t2.Alignment = fyne.TextAlignCenter
+
+	sp2 := NewSpacer(10, 10)
 
 	entryWidth := NewSpacer(150, 0)
 
@@ -272,7 +313,7 @@ func ResizePNG(parent fyne.Window, inputDir string) {
 			// Fyne craziness
 			widthBox := container.NewVBox(entryWidth, widthInput)
 			heightBox := container.NewVBox(entryWidth, heightInput)
-			contentV := container.NewVBox(layout.NewSpacer(), title2, spacer, container.NewHBox(layout.NewSpacer(), widthBox, spacer, heightBox, layout.NewSpacer()), spacer, container.NewHBox(layout.NewSpacer(), submitBtn, layout.NewSpacer()), layout.NewSpacer())
+			contentV := container.NewVBox(layout.NewSpacer(), title2, sp2, t2, sp2, container.NewHBox(layout.NewSpacer(), widthBox, spacer, heightBox, layout.NewSpacer()), sp2, container.NewHBox(layout.NewSpacer(), submitBtn, layout.NewSpacer()), layout.NewSpacer())
 			content = container.NewHBox(layout.NewSpacer(), contentV, layout.NewSpacer())
 		}
 		return content

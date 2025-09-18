@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/color"
 	"log"
 	"regexp"
 	"strconv"
@@ -41,7 +42,7 @@ var ffmpegLinuxAmd64 []byte
 
 var reTrailingDigits = regexp.MustCompile(`(\d+)$`)
 
-var PlayIcon, PauseIcon, DownloadIcon, IconLogo fyne.Resource
+var PlayIcon, PauseIcon, DownloadIcon, InfoIcon, IconLogo fyne.Resource
 
 // Decode cache to avoid re-decoding frames repeatedly
 var ImgCache = struct {
@@ -70,6 +71,12 @@ func init() {
 		log.Panic("failed to load download.svg from assets file")
 	}
 	DownloadIcon = fyne.NewStaticResource("assets/icons/download.svg", download)
+
+	info, err := embeddedAssets.ReadFile("assets/icons/info.svg")
+	if err != nil {
+		log.Panic("failed to load info.svg from assets file")
+	}
+	InfoIcon = fyne.NewStaticResource("assets/icons/info.svg", info)
 
 	icon, err := embeddedAssets.ReadFile("assets/icons/icon.png")
 	if err != nil {
@@ -171,6 +178,7 @@ func GridWindow(a fyne.App, gridRows, gridColumns int) fyne.Window {
 	w := a.NewWindow("Giffy")
 	w.Resize(fyne.NewSize(800, 500))
 	w.SetFixedSize(false)
+	w.SetOnClosed(func() { a.Quit() })
 
 	// Create frame variable and binding to attach to slider
 	var frameFloat float64 = 0
@@ -258,8 +266,18 @@ func GridWindow(a fyne.App, gridRows, gridColumns int) fyne.Window {
 
 	fpsBox := container.NewHBox(layout.NewSpacer(), container.NewVBox(fpsSpacer, fpsInput), container.NewVBox(margin, fpsLabel), margin)
 
+	//Info button to see how th regex captured the frame numbers
+	infoBtn := widget.NewButtonWithIcon("", InfoIcon, func() {
+		if slider.Max != 0 {
+			info := InfoWindow(a, cells)
+			info.CenterOnScreen()
+			info.Show()
+		}
+	})
+	info := container.NewHBox(margin, container.NewVBox(NewSpacer(10, 9), infoBtn, NewSpacer(10, 10)), layout.NewSpacer())
+
 	// Add everything to header (two hboxes stacked so title and frames stay centered)
-	header := container.NewStack(titleHeader, buildBtnArea, fpsBox)
+	header := container.NewStack(titleHeader, buildBtnArea, fpsBox, info)
 
 	// Initialize grid container
 	gridArea := container.New(layout.NewGridLayout(gridColumns))
@@ -379,6 +397,89 @@ func GridWindow(a fyne.App, gridRows, gridColumns int) fyne.Window {
 			spacer,
 			gridArea,
 		))
+
+	return w
+}
+
+// Function for the info button to show regex patterns
+func InfoWindow(a fyne.App, cells []*FileCell) fyne.Window {
+	w := a.NewWindow("Frame Patterns")
+	w.Resize(fyne.NewSize(520, 320))
+	w.SetFixedSize(true)
+
+	// Header
+	title := canvas.NewText("Edit Frame Patterns", ui.Giffy)
+	title.TextSize = 16
+	title.Alignment = fyne.TextAlignCenter
+
+	headerSpacer := NewSpacer(0, 10)
+
+	header := container.NewVBox(headerSpacer, title, headerSpacer)
+
+	// Grid Layout
+	content := container.New(layout.NewVBoxLayout())
+	gridArea := container.NewVScroll(content)
+	spacerWidth1 := NewSpacer(410, 0)
+	spacerWidth2 := NewSpacer(80, 0)
+	spacer := NewSpacer(10, 5)
+	margin := NewSpacer(15, 0)
+	rowSpacer := NewSpacer(0, 10)
+	fileNameLabelSpacer := NewSpacer(0, 32)
+
+	save := widget.NewButton("   Save   ", func() {})
+	saveBtn := container.NewHBox(layout.NewSpacer(), container.NewVBox(rowSpacer, save, rowSpacer), layout.NewSpacer())
+
+	for i, cell := range cells {
+		if len(cell.Files) == 0 {
+			continue
+		}
+
+		label := canvas.NewText(fmt.Sprintf("Cell #%d", i+1), ui.Giffy)
+		label.TextSize = 11
+
+		fileCanvas := canvas.NewRectangle(color.Transparent)
+		fileCanvas.StrokeColor = ui.Giffy
+		fileCanvas.StrokeWidth = 1
+		fileCanvas.CornerRadius = 4
+
+		var file string
+		if len(cell.Files[1].Name()) > 47 {
+			file = fmt.Sprintf("%s...", cell.Files[1].Name()[:45]) // 45 since adding 3 chars with '...' = 48 although [:x] is non inclusive so its 47 char long which we want to be max
+		} else {
+			file = cell.Files[1].Name()
+		}
+
+		fileLabel := canvas.NewText(fmt.Sprintf(" %s ", file), ui.Giffy)
+		fileLabel.TextSize = 15
+
+		fileName := container.NewStack(fileCanvas, fileLabel, fileNameLabelSpacer)
+
+		fileNameStretch := container.NewVBox(spacerWidth1, fileName)
+		fileNameBox := container.NewVBox(label, fileNameStretch, NewSpacer(0, 1.7))
+
+		regPattern := widget.NewEntry()
+		regBox := container.NewVBox(layout.NewSpacer(), spacerWidth2, regPattern, NewSpacer(0, 1))
+
+		idx, ok := FrameIndex(cell.Files[1])
+		if !ok {
+			regPattern.SetText("ERROR FINDING FRAME NUMBER")
+		} else {
+			regPattern.SetText(fmt.Sprintf("%d", idx))
+		}
+		row := container.NewHBox(margin, fileNameBox, spacer, regBox, margin)
+		content.Add(row)
+		content.Add(rowSpacer)
+	}
+
+	content.Add(layout.NewSpacer())
+
+	w.SetContent(container.NewBorder(
+		header,
+		saveBtn,
+		nil,
+		nil,
+		gridArea,
+	))
 
 	return w
 }
