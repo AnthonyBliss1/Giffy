@@ -255,7 +255,7 @@ func WarningWindow(a fyne.App, inputDir string, onCancel func()) fyne.Window {
 	w.SetFixedSize(true)
 
 	// Header
-	msg := canvas.NewText("One or more of your images is larger than 2 MB", ui.Giffy)
+	msg := canvas.NewText("One or more of your images is larger than 1 MB", ui.Giffy)
 	msg.TextSize = 16
 	msg.Alignment = fyne.TextAlignCenter
 
@@ -337,7 +337,7 @@ func ResizePNG(parent fyne.Window, inputDir string) {
 	title2.TextSize = 16
 	title2.Alignment = fyne.TextAlignCenter
 
-	t2 := canvas.NewText("(Recommended MAX is 1200W & 1200H)", ui.Giffy)
+	t2 := canvas.NewText("(Recommended MAX is 900W & 900H)", ui.Giffy)
 	t2.TextSize = 11
 	t2.Alignment = fyne.TextAlignCenter
 
@@ -415,7 +415,7 @@ func NewSpacer(width, height float32) fyne.CanvasObject {
 	return spacer
 }
 
-// Helper function to walk the folder provided by user and 1) Only track images and 2) Raise a warning if the image is > 2 MB
+// Helper function to walk the folder provided by user and 1) Only track images and 2) Raise a warning if the image is > 1 MB
 func WalkChildren(children []fyne.URI) ([]fyne.URI, bool, error) {
 	fileSizeWarning := false
 	var images []fyne.URI
@@ -438,7 +438,7 @@ func WalkChildren(children []fyne.URI) ([]fyne.URI, bool, error) {
 				imageSize := float64(float64(imageInfo.Size()) / (1024.00 * 1024.00))
 
 				// Trigger warning if file size is greater than 2 MB
-				if imageSize > 2.0 {
+				if imageSize > 1.0 {
 					fileSizeWarning = true
 				} else {
 					//	fmt.Printf("[DEBUG] Image Size OK: %v\n", imageSize)
@@ -563,17 +563,8 @@ func BuildExport(dest fyne.URI, rows, cols int, cells []*FileCell, fps int, _ *w
 		}
 	}
 
-	// Build encoder args per OS
-	encArgs := []string{"-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", "-preset", "medium"}
-
-	switch runtime.GOOS {
-	case "darwin":
-		// macOS hardware
-		encArgs = []string{"-c:v", "h264_videotoolbox", "-b:v", "6M", "-pix_fmt", "yuv420p"}
-	case "windows":
-		// Windows hardware
-		encArgs = []string{"-c:v", "h264_mf", "-b:v", "6M", "-pix_fmt", "yuv420p"}
-	}
+	// Build encoder args
+	encArgs := []string{"-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "14", "-preset", "slow", "-tune", "animation"}
 
 	// Encode MP4 with ffmpeg using the numbered PNGs
 	pattern := fmt.Sprintf("%s_%%0%dd.png", outBase, pad)
@@ -602,7 +593,7 @@ func BuildExport(dest fyne.URI, rows, cols int, cells []*FileCell, fps int, _ *w
 			fallback := []string{
 				"-y", "-framerate", strconv.Itoa(fps),
 				"-i", pattern,
-				"-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", "-preset", "medium",
+				"-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "14", "-preset", "slow", "-tune", "animation",
 				"-movflags", "+faststart",
 				mp4Name,
 			}
