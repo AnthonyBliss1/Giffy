@@ -43,5 +43,12 @@ func (f *ForcedVariant) Icon(name fyne.ThemeIconName) fyne.Resource {
 }
 
 func (f *ForcedVariant) Size(name fyne.ThemeSizeName) float32 {
-	return f.Theme.Size(name)
+	switch name {
+	case theme.SizeNameCaptionText:
+		return 13
+	case theme.SizeNameHeadingText:
+		return 13
+	default:
+		return f.Theme.Size(name)
+	}
 }

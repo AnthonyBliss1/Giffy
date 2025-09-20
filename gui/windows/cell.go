@@ -3,6 +3,7 @@ package windows
 import (
 	"fmt"
 	"image/color"
+	"regexp"
 	"sync"
 
 	"fyne.io/fyne/v2"
@@ -18,6 +19,7 @@ type FileCell struct {
 	Btn        *widget.Button
 	Img        *canvas.Image
 	Files      []fyne.URI
+	Regex      *regexp.Regexp
 	FilesMu    sync.RWMutex
 
 	OnLoaded func(count int) // Will be the max frames for the slider

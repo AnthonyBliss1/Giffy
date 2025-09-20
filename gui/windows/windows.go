@@ -10,6 +10,7 @@ import (
 	"log"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -41,6 +42,8 @@ var ffmpegWindowsAmd64 []byte
 var ffmpegLinuxAmd64 []byte
 
 var reTrailingDigits = regexp.MustCompile(`(\d+)$`)
+
+var newPattern *regexp.Regexp
 
 var PlayIcon, PauseIcon, DownloadIcon, InfoIcon, IconLogo fyne.Resource
 
@@ -408,7 +411,7 @@ func InfoWindow(a fyne.App, cells []*FileCell) fyne.Window {
 	w.SetFixedSize(true)
 
 	// Header
-	title := canvas.NewText("Edit Frame Patterns", ui.Giffy)
+	title := canvas.NewText("Edit Frame Identification", ui.Giffy)
 	title.TextSize = 16
 	title.Alignment = fyne.TextAlignCenter
 
@@ -424,11 +427,9 @@ func InfoWindow(a fyne.App, cells []*FileCell) fyne.Window {
 	spacer := NewSpacer(10, 5)
 	margin := NewSpacer(15, 0)
 	rowSpacer := NewSpacer(0, 10)
-	fileNameLabelSpacer := NewSpacer(0, 32)
 
-	save := widget.NewButton("   Save   ", func() {})
-	saveBtn := container.NewHBox(layout.NewSpacer(), container.NewVBox(rowSpacer, save, rowSpacer), layout.NewSpacer())
-
+	// Creating info rows for each cell in the grid
+	var entries = []*widget.Entry{}
 	for i, cell := range cells {
 		if len(cell.Files) == 0 {
 			continue
@@ -442,34 +443,58 @@ func InfoWindow(a fyne.App, cells []*FileCell) fyne.Window {
 		fileCanvas.StrokeWidth = 1
 		fileCanvas.CornerRadius = 4
 
-		var file string
-		if len(cell.Files[1].Name()) > 47 {
-			file = fmt.Sprintf("%s...", cell.Files[1].Name()[:45]) // 45 since adding 3 chars with '...' = 48 although [:x] is non inclusive so its 47 char long which we want to be max
-		} else {
-			file = cell.Files[1].Name()
+		regPattern := widget.NewEntry()
+		entries = append(entries, regPattern)
+		regPattern.SetText(fmt.Sprintf("%v", cell.Regex))
+		regLabel := canvas.NewText("RegEx", ui.Giffy)
+		regLabel.TextSize = 11
+
+		regBox := container.NewVBox(regLabel, spacerWidth2, regPattern)
+
+		fileLabel, err := BuildFileLabel(cell, regPattern.Text)
+		if err != nil {
+			log.Panic(err)
 		}
+		fileName := container.NewStack(fileCanvas, fileLabel)
 
-		fileLabel := canvas.NewText(fmt.Sprintf(" %s ", file), ui.Giffy)
-		fileLabel.TextSize = 15
-
-		fileName := container.NewStack(fileCanvas, fileLabel, fileNameLabelSpacer)
+		regPattern.OnChanged = func(p string) {
+			newFileLabel, err := BuildFileLabel(cell, p)
+			if err == nil {
+				fileName.Objects[1] = newFileLabel
+				newFileLabel.Refresh()
+			}
+		}
 
 		fileNameStretch := container.NewVBox(spacerWidth1, fileName)
-		fileNameBox := container.NewVBox(label, fileNameStretch, NewSpacer(0, 1.7))
+		fileNameBox := container.NewVBox(label, fileNameStretch)
 
-		regPattern := widget.NewEntry()
-		regBox := container.NewVBox(layout.NewSpacer(), spacerWidth2, regPattern, NewSpacer(0, 1))
-
-		idx, ok := FrameIndex(cell.Files[1])
-		if !ok {
-			regPattern.SetText("ERROR FINDING FRAME NUMBER")
-		} else {
-			regPattern.SetText(fmt.Sprintf("%d", idx))
-		}
 		row := container.NewHBox(margin, fileNameBox, spacer, regBox, margin)
 		content.Add(row)
 		content.Add(rowSpacer)
 	}
+
+	save := widget.NewButton("   Save   ", func() {
+		fmt.Println("[DEBUG Saving RegEx patterns...]")
+		for i, cell := range cells {
+			if len(cell.Files) == 0 {
+				continue
+			}
+
+			newPattern, err := regexp.Compile(strings.TrimSpace(entries[i].Text))
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
+
+			if cell.Regex.String() != entries[i].Text {
+				fmt.Printf("[DEBUG] OG Pattern: %s | New Pattern: %s\n", cell.Regex.String(), entries[i].Text)
+				cell.Regex = newPattern
+				RefreshFileCell(cell, i)
+			}
+		}
+		w.Close()
+	})
+	saveBtn := container.NewHBox(layout.NewSpacer(), container.NewVBox(rowSpacer, save, rowSpacer), layout.NewSpacer())
 
 	content.Add(layout.NewSpacer())
 

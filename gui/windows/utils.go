@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -23,6 +24,7 @@ import (
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/storage"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"github.com/anthonybliss1/giffy/gui/resize"
 	ui "github.com/anthonybliss1/giffy/theme"
@@ -34,6 +36,9 @@ import (
 func NewFileCell(a fyne.App, parent fyne.Window) *FileCell {
 	// Initialize collection struct
 	fc := &FileCell{}
+
+	// Set default frame regex to reTrailingDigits
+	fc.Regex = reTrailingDigits
 
 	// Background rectangle that will contain the gif
 	fc.Background = canvas.NewRectangle(ui.Giffy)
@@ -80,8 +85,8 @@ func NewFileCell(a fyne.App, parent fyne.Window) *FileCell {
 
 				// Sort files in slice of file paths
 				sort.SliceStable(images, func(i, j int) bool {
-					ni, okI := FrameIndex(images[i])
-					nj, okJ := FrameIndex(images[j])
+					ni, okI := FrameIndex(images[i], fc.Regex)
+					nj, okJ := FrameIndex(images[j], fc.Regex)
 
 					if okI && okJ && ni != nj {
 						return ni < nj
@@ -118,8 +123,8 @@ func NewFileCell(a fyne.App, parent fyne.Window) *FileCell {
 
 		// Sort files in slice of file paths
 		sort.SliceStable(images, func(i, j int) bool {
-			ni, okI := FrameIndex(images[i])
-			nj, okJ := FrameIndex(images[j])
+			ni, okI := FrameIndex(images[i], fc.Regex)
+			nj, okJ := FrameIndex(images[j], fc.Regex)
 
 			if okI && okJ && ni != nj {
 				return ni < nj
@@ -162,6 +167,85 @@ func NewFileCell(a fyne.App, parent fyne.Window) *FileCell {
 	fc.Container = container.NewStack(fc.Background, upload)
 
 	return fc
+}
+
+// Helper function utilizing similar logic to NewFileCell to refresh images shown in a cell. To be used when frame regex is changed
+func RefreshFileCell(cell *FileCell, idx int) {
+	images := cell.Files
+	// Sort files in slice of file paths
+	sort.SliceStable(images, func(i, j int) bool {
+		ni, okI := FrameIndex(images[i], cell.Regex)
+		nj, okJ := FrameIndex(images[j], cell.Regex)
+
+		if okI && okJ && ni != nj {
+			return ni < nj
+		}
+		if okI != okJ {
+			// Files with numeric suffix come before those without
+			return okI
+		}
+		// Fallback by basename (case-insensitive)
+		return strings.ToLower(images[i].Name()) < strings.ToLower(images[j].Name())
+	})
+
+	//DEBUG TO CHECK SORT ORDER
+	for i := range len(images) {
+		fmt.Printf("[DEBUG] Cell[%d]: %s\n", idx, images[i].Name())
+	}
+
+	cell.FilesMu.Lock()
+	cell.Files = images
+	cell.FilesMu.Unlock()
+
+	if cell.OnLoaded != nil {
+		cell.OnLoaded(len(images))
+	}
+	cell.Container.Refresh()
+}
+
+// Helper function to build filename label inside the info window (dynamically color segments based on regexp pattern)
+func BuildFileLabel(cell *FileCell, pString string) (*fyne.Container, error) {
+	var file *widget.TextSegment
+	var fileLabel *fyne.Container
+
+	style := widget.RichTextStyle{
+		Inline:    true,
+		SizeName:  theme.SizeNameCaptionText,
+		TextStyle: fyne.TextStyle{Monospace: true},
+	}
+
+	pattern, err := regexp.Compile(pString)
+	if err != nil {
+		fmt.Println("[LOG] Not valid regex...")
+		file = &widget.TextSegment{Style: style, Text: cell.Files[0].Name()}
+		rt := widget.NewRichText(file)
+		fileLabel = container.NewBorder(nil, nil, layout.NewSpacer(), layout.NewSpacer(), rt)
+		return fileLabel, nil
+	}
+
+	frameNo, ok := FrameIndex(cell.Files[0], pattern)
+	idx := strings.Index(cell.Files[0].Name(), strconv.Itoa(frameNo))
+	if !ok || idx == -1 {
+		if len(cell.Files[0].Name()) > 47 {
+			file = &widget.TextSegment{Style: style, Text: cell.Files[0].Name()[:45]} // 45 since adding 3 chars with '...' = 48 although [:x] is non inclusive so its 47 char long which we want to be max
+		} else {
+			file = &widget.TextSegment{Style: style, Text: cell.Files[0].Name()}
+		}
+		rt := widget.NewRichText(file)
+		fileLabel = container.NewBorder(nil, nil, layout.NewSpacer(), layout.NewSpacer(), rt)
+	} else {
+		fileText1 := &widget.TextSegment{Style: style, Text: cell.Files[0].Name()[:idx]}
+
+		frame := &widget.TextSegment{Style: widget.RichTextStyle{Inline: true, SizeName: theme.SizeNameCaptionText, TextStyle: fyne.TextStyle{Monospace: true}, ColorName: theme.ColorNameError}, Text: strconv.Itoa(frameNo)} // Show the match from regex in red (should be frame number)
+
+		fileText2 := &widget.TextSegment{Style: style, Text: cell.Files[0].Name()[idx+len(strconv.Itoa(frameNo)):]}
+
+		rt := widget.NewRichText(fileText1, frame, fileText2)
+		fileLabel = container.NewBorder(nil, nil, layout.NewSpacer(), layout.NewSpacer(), rt)
+
+		//fmt.Printf("[DEBUG] fileText1: %s\nframe: %s\nfileText2: %s\n", fileText1.Text, frame.Text, fileText2.Text)
+	}
+	return fileLabel, nil
 }
 
 // UI function to build file size warning window
@@ -368,11 +452,11 @@ func WalkChildren(children []fyne.URI) ([]fyne.URI, bool, error) {
 }
 
 // Helper function to return trailing numeric values in filename
-func FrameIndex(u fyne.URI) (int, bool) {
+func FrameIndex(u fyne.URI, pattern *regexp.Regexp) (int, bool) {
 	name := u.Name()
 	base := strings.TrimSuffix(name, filepath.Ext(name))
-	m := reTrailingDigits.FindStringSubmatch(base)
-	if m == nil {
+	m := pattern.FindStringSubmatch(base)
+	if m == nil || len(m) == 1 {
 		return 0, false
 	}
 	n, err := strconv.Atoi(m[1])
