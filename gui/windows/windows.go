@@ -486,7 +486,7 @@ func InfoWindow(a fyne.App, cells []*FileCell) fyne.Window {
 				continue
 			}
 
-			if cell.Regex.String() != entries[i].Text {
+			if cell.Regex.String() != entries[i].Text && entries[i].Text != "" {
 				fmt.Printf("[DEBUG] OG Pattern: %s | New Pattern: %s\n", cell.Regex.String(), entries[i].Text)
 				cell.Regex = newPattern
 				RefreshFileCell(cell, i)
