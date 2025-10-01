@@ -4,5 +4,4 @@ Makefile
 fynecross.txt
 fyne-cross/
 bin/
-ffmpeg.sh
 gui/windows/assets/ffmpeg/
